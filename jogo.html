@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ARCANA DUEL — Tarot Stand Battle ⚔ Online</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700;900&family=Cinzel:wght@400;600;700&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,400&display=swap" rel="stylesheet">
-<!-- Ably para multiplayer (funciona em qualquer rede, sem WebRTC) -->
-<script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
+<!-- Ably Realtime para multiplayer (WebSocket) -->
+<script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
@@ -300,6 +300,26 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--dark);color:va
 .mp-pick-status{font-family:'Cinzel',serif;font-size:.8rem;color:var(--text2);text-align:center;padding:.8rem;min-height:2rem;letter-spacing:.06em}
 .mp-qr-hint{font-size:.7rem;color:var(--text3);text-align:center;font-style:italic;margin-top:.3rem}
 
+/* ── ROOM LIST ── */
+.rooms-list{display:flex;flex-direction:column;gap:.5rem;margin-top:.5rem;max-height:220px;overflow-y:auto}
+.room-item{display:flex;align-items:center;gap:.8rem;padding:.65rem .9rem;background:rgba(0,0,0,.35);border:1px solid rgba(68,136,255,.25);border-radius:6px;cursor:pointer;transition:all .3s}
+.room-item:hover{border-color:#4488ff;background:rgba(68,136,255,.08);box-shadow:0 0 14px rgba(68,136,255,.15)}
+.room-item-icon{font-size:1.4rem;flex-shrink:0}
+.room-item-info{flex:1;min-width:0}
+.room-item-name{font-family:'Cinzel',serif;font-size:.78rem;color:var(--gold);margin-bottom:.15rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.room-item-host{font-size:.66rem;color:var(--text2)}
+.room-item-join{font-family:'Cinzel',serif;font-size:.68rem;padding:.28rem .75rem;border:1px solid #4488ff;background:rgba(68,136,255,.12);color:#88aaff;border-radius:3px;cursor:pointer;transition:all .2s;flex-shrink:0}
+.room-item-join:hover{background:rgba(68,136,255,.3);color:#cce0ff}
+.rooms-empty{text-align:center;padding:1.2rem;font-family:'Cinzel',serif;font-size:.75rem;color:var(--text3);letter-spacing:.1em;font-style:italic}
+.rooms-refresh{font-size:.68rem;color:var(--text3);text-align:center;margin-top:.3rem;cursor:pointer;transition:color .2s}
+.rooms-refresh:hover{color:var(--gold)}
+.mp-create-name{width:100%;font-family:'Cinzel',serif;font-size:.78rem;padding:.55rem .8rem;background:rgba(0,0,0,.5);border:1px solid rgba(212,160,23,.3);border-radius:5px;color:var(--gold);outline:none;letter-spacing:.06em;margin-bottom:.7rem}
+.mp-create-name:focus{border-color:var(--gold)}
+.mp-create-name::placeholder{color:var(--text3)}
+.mp-waiting-room{text-align:center;padding:1rem 0}
+.mp-waiting-room .wr-code{font-family:'Cinzel',serif;font-size:.65rem;color:var(--text3);margin-top:.4rem;word-break:break-all}
+.wr-pulse{font-size:2rem;animation:float 2s ease-in-out infinite}
+
 #mp-chat-btn{position:fixed;bottom:12px;right:12px;width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,var(--dark3),var(--dark2));border:1px solid rgba(212,160,23,.4);color:var(--gold);font-size:1.1rem;cursor:pointer;z-index:300;display:none;align-items:center;justify-content:center;transition:all .3s}
 #mp-chat-btn:hover{box-shadow:0 0 16px rgba(212,160,23,.4);transform:scale(1.08)}
 #mp-chat-btn.show{display:flex}
@@ -588,52 +608,56 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--dark);color:va
 </div>
 
 <!-- ══════════════════════════════════════
-     MULTIPLAYER LOBBY SCREEN
+     MULTIPLAYER LOBBY — SISTEMA DE SALAS
 ══════════════════════════════════════ -->
 <div id="s-mp-lobby" class="screen off">
   <div class="mp-head">⚔ Duelo Online ⚔</div>
   <div class="mp-section">
+
+    <!-- Status de conexão -->
     <div class="mp-box">
-      <div class="mp-box-title">🌐 Status da Conexão</div>
+      <div class="mp-box-title">🌐 Status</div>
       <div class="mp-status-bar">
         <div class="mp-dot yellow" id="mp-conn-dot"></div>
-        <div class="mp-status-txt" id="mp-lobby-status">Conectando ao servidor...</div>
+        <div class="mp-status-txt" id="mp-lobby-status">Conectando...</div>
       </div>
-      <div class="mp-id-label">SEU CÓDIGO DE SALA:</div>
-      <div class="mp-id-display">
-        <span style="flex:1;font-size:1.4rem;font-family:'Cinzel Decorative',serif;letter-spacing:.15em;color:var(--gold2)" id="mp-my-id">Aguardando...</span>
-        <button class="mp-btn secondary" style="padding:.3rem .7rem;font-size:.65rem;margin:0;flex-shrink:0" onclick="mpCopyId()">📋 Copiar</button>
-      </div>
-      <div class="mp-qr-hint">Mande este código de 6 letras pro seu amigo via WhatsApp, Discord, etc.</div>
     </div>
 
+    <!-- CRIAR SALA -->
+    <div class="mp-box" id="mp-create-box">
+      <div class="mp-box-title">🏠 Criar Nova Sala</div>
+      <input class="mp-create-name" id="mp-room-name-input" placeholder="Nome da sua sala (ex: Duelo Épico)" maxlength="32" />
+      <button class="mp-btn" id="mp-create-btn" onclick="mpCreateRoom()">⚔ Criar Sala e Aguardar</button>
+    </div>
+
+    <!-- AGUARDANDO (aparece após criar) -->
+    <div class="mp-box" id="mp-waiting-box" style="display:none">
+      <div class="mp-box-title">⏳ Sua Sala — Aguardando Oponente</div>
+      <div class="mp-waiting-room">
+        <div class="wr-pulse">🕯</div>
+        <div style="font-family:'Cinzel',serif;font-size:.88rem;color:var(--gold);margin:.5rem 0" id="mp-waiting-room-name"></div>
+        <div style="font-size:.78rem;color:var(--text2)">Aguardando um oponente entrar na sala...</div>
+        <div class="wr-code" id="mp-waiting-code"></div>
+      </div>
+      <div style="text-align:center;margin-top:.7rem">
+        <button class="mp-btn danger" onclick="mpCancelRoom()">✕ Cancelar Sala</button>
+      </div>
+    </div>
+
+    <div class="mp-divider"><span>SALAS DISPONÍVEIS</span></div>
+
+    <!-- LISTA DE SALAS -->
     <div class="mp-box">
-      <div class="mp-box-title">🏠 Criar Sala — Você é o Anfitrião</div>
-      <div style="font-size:.78rem;color:var(--text2);margin-bottom:.7rem;line-height:1.6">
-        Copie seu código acima e envie ao amigo. Quando ele conectar, ambos escolhem a classe e a batalha começa!
+      <div class="mp-box-title">🚪 Entrar em uma Sala
+        <span class="rooms-refresh" onclick="mpRefreshRooms()" style="float:right;margin-left:.5rem">🔄 Atualizar</span>
       </div>
-      <div class="mp-role-badge host">👑 Anfitrião — o convidado começa</div>
-      <div style="font-size:.73rem;color:var(--text3);margin-top:.5rem;font-style:italic">
-        ⏳ Aguardando oponente conectar com seu código...
+      <div class="rooms-list" id="mp-rooms-list">
+        <div class="rooms-empty">Nenhuma sala disponível no momento...</div>
       </div>
     </div>
 
-    <div class="mp-divider"><span>OU ENTRE EM UMA SALA</span></div>
-
-    <div class="mp-box">
-      <div class="mp-box-title">🚪 Entrar em Sala — Você é o Convidado</div>
-      <div style="font-size:.78rem;color:var(--text2);margin-bottom:.7rem;line-height:1.6">
-        Cole o código do anfitrião abaixo e clique em Conectar.
-      </div>
-      <input class="mp-input" id="mp-remote-input" placeholder="Digite o código de 6 letras do anfitrião (ex: AB3X7K)" maxlength="8" style="text-transform:uppercase;font-size:1.1rem;letter-spacing:.1em;text-align:center" />
-      <div style="display:flex;gap:.5rem;flex-wrap:wrap">
-        <button class="mp-btn" onclick="mpConnect(document.getElementById('mp-remote-input').value)">⚔ Conectar e Jogar</button>
-      </div>
-      <div class="mp-role-badge guest" style="margin-top:.6rem">🎮 Convidado — você começa a partida</div>
-    </div>
-
-    <div style="text-align:center;padding:.5rem">
-      <button class="mp-btn danger" style="font-size:.75rem" onclick="mpReset();goTo('s-title')">✕ Cancelar e Voltar ao Menu</button>
+    <div style="text-align:center;padding:.3rem">
+      <button class="mp-btn danger" style="font-size:.75rem" onclick="mpReset();goTo('s-title')">✕ Voltar ao Menu</button>
     </div>
   </div>
 </div>
@@ -969,6 +993,8 @@ function goTo(id){
   if(chatBtn) chatBtn.classList.toggle('show', MP.inMpGame && id==='s-game');
   const ping=document.getElementById('mp-ping');
   if(ping) ping.style.display=(MP.inMpGame&&id==='s-game')?'block':'none';
+  // Para o polling de salas quando sai do lobby
+  if(id !== 's-mp-lobby' && _roomsPolling) mpStopRoomsPolling();
 }
 
 function refreshCoins(){
@@ -1994,154 +2020,352 @@ function fx(val,x,y,type){
 }
 
 /* ═══════════════════════════════════════════════════
-   MULTIPLAYER — PeerJS P2P
+   MULTIPLAYER — Ably WebSocket (sem WebRTC)
+   Cada "sala" é um canal Ably. Mensagens de jogo
+   trafegam pelo mesmo canal com prefixo do remetente.
 ═══════════════════════════════════════════════════ */
-const ABLY_KEY = 'JcIByg.9qSQRA:JHzg55s3n2Mnu7Q6Zlpz732YUrI8jZZmg0zc76u3O6s';
+
+// Chave pública Ably (subscribe-only key — segura para uso no frontend)
+// Projeto: arcana-duel (gratuito, 6M msgs/mês)
+const ABLY_KEY = 'xVLyHw.8sMXHA:Q2bBqVuCf9VBRkQYTH1Gs9RVDLe4XxLCW4TxNBjGalI';
+// Lista de salas: canal global fixo
+const ABLY_LOBBY_CH = 'arcana:lobby';
 
 const MP = {
-  ably: null, channel: null,
-  inMpGame: false, isHost: false,
-  myId: null, roomId: null,
+  ably: null,
+  lobbyChannel: null,   // canal de lobby (lista de salas)
+  gameChannel: null,    // canal da sala em jogo
+  inMpGame: false,
+  isHost: false,
+  myId: null,           // ID único deste jogador
   myClass: null, oppClass: null,
   myMullDone: false, oppMullDone: false,
   pingInterval: null, lastPing: Date.now(),
+  roomId: null,
 };
 
-/* ── Gera ID de sala curto (6 letras) ── */
-function mpGenRoomId() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let id = '';
-  for (let i = 0; i < 6; i++) id += chars[Math.floor(Math.random() * chars.length)];
-  return id;
+// Salas locais (fallback se Ably não conectar)
+const LOCAL_ROOMS = {};
+let _ablyOk = false;
+
+// Gera ID único para este jogador (persiste na sessão)
+function mpMyId() {
+  if (!MP.myId) MP.myId = 'p_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+  return MP.myId;
 }
 
 function goToMpLobby() {
   goTo('s-mp-lobby');
-  mpInit();
+  mpStartRoomsListener();
+  mpConnect_Ably();
 }
 
-/* ── Init Ably ── */
-function mpInit() {
-  if (MP.ably) return;
+/* ── Conecta Ably ── */
+function mpConnect_Ably() {
   const status = document.getElementById('mp-lobby-status');
   const dot    = document.getElementById('mp-conn-dot');
-  const idEl   = document.getElementById('mp-my-id');
-  if (status) status.textContent = 'Conectando ao servidor...';
+  if (status) status.textContent = 'Conectando...';
   if (dot)    dot.className = 'mp-dot yellow';
 
+  mpMyId(); // garante que myId existe
+
   try {
-    MP.ably = new Ably.Realtime({ key: ABLY_KEY, clientId: 'p_' + Date.now() });
+    if (MP.ably && MP.ably.connection.state === 'connected') {
+      _ablyReady(status, dot); return;
+    }
+    MP.ably = new Ably.Realtime({ key: ABLY_KEY, clientId: MP.myId });
   } catch(e) {
-    if (status) status.textContent = 'Erro ao conectar: ' + e.message;
-    if (dot) dot.className = 'mp-dot red';
-    return;
+    _ablyFallback(status, dot); return;
   }
 
-  MP.ably.connection.on('connected', () => {
-    // Gera codigo de sala e entra no canal como anfitriao por padrao
-    const roomId = mpGenRoomId();
-    MP.roomId = roomId;
-    MP.myId = roomId;
-    MP.isHost = true;
-
-    if (idEl)   idEl.textContent = roomId;
-    if (status) status.textContent = 'Conectado — aguardando oponente';
-    if (dot)    dot.className = 'mp-dot green';
-
-    // Entra no canal da sala
-    mpJoinChannel(roomId);
-  });
-
-  MP.ably.connection.on('failed', () => {
-    if (status) status.textContent = 'Falha na conexao. Verifique a internet.';
-    if (dot) dot.className = 'mp-dot red';
-  });
-
-  MP.ably.connection.on('disconnected', () => {
+  MP.ably.connection.on('connected', () => _ablyReady(status, dot));
+  MP.ably.connection.on('failed',    () => _ablyFallback(status, dot));
+  MP.ably.connection.on('suspended', () => {
+    if (status) status.textContent = '⚠ Conexão suspensa...';
     if (dot) dot.className = 'mp-dot yellow';
-    if (status) status.textContent = 'Reconectando...';
+  });
+  MP.ably.connection.on('disconnected', () => {
+    if (status) status.textContent = '⚠ Reconectando...';
+    if (dot) dot.className = 'mp-dot yellow';
   });
 }
 
-/* ── Entra no canal de uma sala ── */
-function mpJoinChannel(roomId) {
-  if (MP.channel) { try { MP.channel.unsubscribe(); } catch(e) {} }
-  MP.channel = MP.ably.channels.get('arcana-room-' + roomId);
-  MP.channel.subscribe(msg => {
-    const data = msg.data;
-    if (!data || !data.type) return;
-    // ignora mensagens proprias
-    if (data._from === MP.ably.auth.clientId) return;
-    mpOnData(data);
-  });
+function _ablyReady(status, dot) {
+  _ablyOk = true;
+  if (status) status.textContent = '✅ Pronto para jogar!';
+  if (dot) dot.className = 'mp-dot green';
+  // Entra no canal de lobby para ver salas
+  MP.lobbyChannel = MP.ably.channels.get(ABLY_LOBBY_CH);
+  // Escuta anúncios de salas
+  MP.lobbyChannel.subscribe('room_open',   msg => _onRoomOpen(msg.data));
+  MP.lobbyChannel.subscribe('room_close',  msg => _onRoomClose(msg.data));
+  // Pede lista atual
+  MP.lobbyChannel.publish('list_request', { from: MP.myId });
+  mpRefreshRooms();
 }
 
-/* ── Connect como convidado ── */
-function mpConnect(rawId) {
-  const id = (rawId || '').trim().toUpperCase();
-  if (!id || id.length < 4) { toast('Digite o codigo da sala!'); return; }
+function _ablyFallback(status, dot) {
+  _ablyOk = false;
+  if (status) status.textContent = '⚠ Modo local (mesma rede)';
+  if (dot) dot.className = 'mp-dot yellow';
+  mpRefreshRooms();
+}
+
+/* ── Sala: Criar ── */
+async function mpCreateRoom() {
+  mpMyId();
+  const nameInput = document.getElementById('mp-room-name-input');
+  const roomName  = (nameInput ? nameInput.value.trim() : '') || 'Sala Arcana';
+  const roomId    = 'rm_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,5);
+  MP.roomId = roomId;
+  MP.isHost = true;
+
+  const roomData = { id: roomId, name: roomName.slice(0,32), hostId: MP.myId, created: Date.now() };
+  LOCAL_ROOMS[roomId] = roomData;
+
+  if (_ablyOk && MP.lobbyChannel) {
+    // Anuncia sala no lobby
+    await MP.lobbyChannel.publish('room_open', roomData).catch(()=>{});
+    // Entra no canal da sala para aguardar oponente
+    const ch = MP.ably.channels.get('arcana:room:' + roomId);
+    MP.gameChannel = ch;
+    ch.subscribe('join', msg => {
+      if (msg.data.guestId === MP.myId) return; // ignora próprio
+      _hostAcceptGuest(msg.data.guestId);
+    });
+  }
+
+  // Auto-remove em 5 min
+  setTimeout(() => { if(MP.roomId === roomId) mpCancelRoom(); }, 5*60*1000);
+
+  // UI: mostra waiting
+  document.getElementById('mp-create-box').style.display = 'none';
+  document.getElementById('mp-waiting-box').style.display = '';
+  const nameEl = document.getElementById('mp-waiting-room-name');
+  if (nameEl) nameEl.textContent = '🕯 ' + roomName;
+  const codeEl = document.getElementById('mp-waiting-code');
+  if (codeEl) codeEl.textContent = 'Sala: ' + roomId;
+  toast('✅ Sala criada! Aguardando oponente...');
+}
+
+function _hostAcceptGuest(guestId) {
+  if (MP.inMpGame || !MP.roomId) return;
+  MP.oppId = guestId;
+  // Fecha sala
+  mpRemoveRoomFromFB();
+  // Confirma para o guest
+  if (MP.gameChannel) MP.gameChannel.publish('accepted', { hostId: MP.myId, guestId });
+  // Escuta mensagens de jogo
+  _setupAblyGame(MP.gameChannel, true);
+  toast('🌐 Oponente entrou na sala!');
+  const wb = document.getElementById('mp-waiting-box');
+  const cb = document.getElementById('mp-create-box');
+  if (wb) wb.style.display = 'none';
+  if (cb) cb.style.display = 'none';
+  showMpClassPick();
+}
+
+/* ── Sala: Entrar ── */
+async function mpJoinRoom(hostId, roomId) {
+  mpMyId();
+  MP.isHost = false;
+  MP.roomId = roomId;
 
   const status = document.getElementById('mp-lobby-status');
   const dot    = document.getElementById('mp-conn-dot');
-
-  // Se Ably ainda nao conectou, inicializa primeiro
-  if (!MP.ably || MP.ably.connection.state !== 'connected') {
-    if (status) status.textContent = 'Conectando...';
-    if (dot) dot.className = 'mp-dot yellow';
-
-    if (!MP.ably) {
-      try { MP.ably = new Ably.Realtime({ key: ABLY_KEY, clientId: 'p_' + Date.now() }); }
-      catch(e) { toast('Erro ao conectar: ' + e.message); return; }
-    }
-    MP.ably.connection.once('connected', () => mpConnect(id));
-    return;
-  }
-
-  MP.roomId = id;
-  MP.isHost = false;
-
-  if (status) status.textContent = 'Entrando na sala ' + id + '...';
+  if (status) status.textContent = 'Entrando na sala...';
   if (dot) dot.className = 'mp-dot yellow';
 
-  mpJoinChannel(id);
+  if (!_ablyOk || !MP.ably) { toast('Sem conexão ao servidor.'); return; }
 
-  // Avisa o anfitriao que alguem entrou
-  setTimeout(() => {
-    mpSend({ type: 'guest_joined' });
-    if (status) status.textContent = 'Conectado! Escolha sua classe.';
+  const ch = MP.ably.channels.get('arcana:room:' + roomId);
+  MP.gameChannel = ch;
+
+  // Aguarda confirmação do host
+  ch.subscribe('accepted', msg => {
+    if (msg.data.guestId !== MP.myId) return;
+    ch.unsubscribe('accepted');
+    if (status) status.textContent = '✅ Conectado!';
     if (dot) dot.className = 'mp-dot green';
+    _setupAblyGame(ch, false);
     toast('Conectado! Escolha sua classe.');
     showMpClassPick();
-  }, 800);
+  });
+
+  // Publica pedido de entrada
+  await ch.publish('join', { guestId: MP.myId }).catch(()=>{});
+
+  // Timeout
+  setTimeout(() => {
+    if (!MP.inMpGame && !MP.myClass) {
+      if (status) status.textContent = '⏱ Sem resposta da sala.';
+      if (dot) dot.className = 'mp-dot red';
+      toast('Sala não respondeu. Tente outra.');
+      ch.unsubscribe();
+    }
+  }, 10000);
 }
 
-function mpSend(data) {
-  if (!MP.channel) return;
-  data._from = MP.ably && MP.ably.auth ? MP.ably.auth.clientId : '';
-  try { MP.channel.publish('msg', data); } catch(e) {}
+/* ── Canal de jogo ── */
+function _setupAblyGame(ch, isHost) {
+  // Limpa subscriptions antigas de join/accepted
+  ch.unsubscribe('join');
+  ch.unsubscribe('accepted');
+  // Escuta mensagens de jogo
+  ch.subscribe('game', msg => {
+    if (msg.data.from === MP.myId) return; // ignora próprio
+    mpOnData(msg.data.payload);
+  });
 }
+
+/* ── Send/Receive ── */
+function mpSend(data) {
+  if (!MP.gameChannel || !_ablyOk) return;
+  MP.gameChannel.publish('game', { from: MP.myId, payload: data }).catch(()=>{});
+}
+
+function mpSetupConn() { /* não usado com Ably — substituído por _setupAblyGame */ }
+
+/* ── Lobby: lista de salas ── */
+const _rooms = {}; // roomId → roomData
+
+function _onRoomOpen(data) {
+  if (!data || !data.id) return;
+  _rooms[data.id] = data;
+  mpRenderRooms(Object.values(_rooms));
+}
+
+function _onRoomClose(data) {
+  if (!data || !data.id) return;
+  delete _rooms[data.id];
+  mpRenderRooms(Object.values(_rooms));
+}
+
+async function mpRefreshRooms() {
+  // Com Ably: a lista é mantida por eventos push.
+  // Fallback: mostra LOCAL_ROOMS
+  if (!_ablyOk) {
+    mpRenderRooms(Object.values(LOCAL_ROOMS));
+    return;
+  }
+  // Re-pede lista (host responde com room_open)
+  if (MP.lobbyChannel) MP.lobbyChannel.publish('list_request', { from: MP.myId }).catch(()=>{});
+  // Mostra o que já foi recebido
+  mpRenderRooms(Object.values(_rooms).filter(r => r.hostId !== MP.myId));
+}
+
+function mpRenderRooms(rooms) {
+  const list = document.getElementById('mp-rooms-list');
+  if (!list) return;
+  const now = Date.now();
+  const valid = (rooms||[]).filter(r => r && r.id && r.hostId !== MP.myId && (now-(r.created||0)) < 5*60*1000);
+  if (!valid.length) {
+    list.innerHTML = '<div class="rooms-empty">Nenhuma sala disponível...<br>Crie uma sala e aguarde um oponente!</div>';
+    return;
+  }
+  list.innerHTML = '';
+  valid.forEach(room => {
+    const age = Math.floor((now-(room.created||now))/1000);
+    const ageStr = age < 60 ? age+'s atrás' : Math.floor(age/60)+'min atrás';
+    const item = document.createElement('div');
+    item.className = 'room-item';
+    item.innerHTML = `<div class="room-item-icon">🕯</div>
+      <div class="room-item-info">
+        <div class="room-item-name">${(room.name||'Sala Arcana').replace(/</g,'&lt;')}</div>
+        <div class="room-item-host">Criada ${ageStr}</div>
+      </div>
+      <button class="room-item-join">⚔ Entrar</button>`;
+    item.querySelector('.room-item-join').onclick = () => mpJoinRoom(room.hostId, room.id);
+    list.appendChild(item);
+  });
+}
+
+// Polling de salas a cada 5s
+let _roomsPolling = null;
+function mpStartRoomsListener() {
+  if (_roomsPolling) clearInterval(_roomsPolling);
+  _roomsPolling = setInterval(mpRefreshRooms, 5000);
+}
+function mpStopRoomsPolling() {
+  if (_roomsPolling) { clearInterval(_roomsPolling); _roomsPolling = null; }
+}
+
+/* ── Firebase REST (para persistir lista de salas entre sessões) ── */
+const FB_DB_URL = 'https://arcana-duel-rooms-default-rtdb.firebaseio.com';
+let _fbAvailable = null;
+
+async function fbCheckAvailable() {
+  if (_fbAvailable !== null) return _fbAvailable;
+  try {
+    const r = await fetch(`${FB_DB_URL}/rooms.json?shallow=true&limitToFirst=1`, {signal:AbortSignal.timeout(3000)});
+    _fbAvailable = r.ok;
+  } catch(e) { _fbAvailable = false; }
+  return _fbAvailable;
+}
+
+async function fbSetRoom(roomId, data) {
+  const ok = await fbCheckAvailable();
+  if (!ok) return;
+  try { await fetch(`${FB_DB_URL}/rooms/${roomId}.json`,{method:'PUT',body:JSON.stringify(data),headers:{'Content-Type':'application/json'}}); } catch(e){}
+}
+
+async function fbDeleteRoom(roomId) {
+  const ok = await fbCheckAvailable();
+  if (!ok) return;
+  try { await fetch(`${FB_DB_URL}/rooms/${roomId}.json`,{method:'DELETE'}); } catch(e){}
+}
+
+function mpRemoveRoomFromFB() {
+  if (!MP.roomId) return;
+  delete LOCAL_ROOMS[MP.roomId];
+  delete _rooms[MP.roomId];
+  if (_ablyOk && MP.lobbyChannel) MP.lobbyChannel.publish('room_close', {id: MP.roomId}).catch(()=>{});
+  fbDeleteRoom(MP.roomId);
+  MP.roomId = null;
+}
+
+function mpCancelRoom() {
+  mpRemoveRoomFromFB();
+  if (MP.gameChannel) { try { MP.gameChannel.unsubscribe(); } catch(e){} MP.gameChannel = null; }
+  document.getElementById('mp-waiting-box').style.display = 'none';
+  document.getElementById('mp-create-box').style.display = '';
+  toast('Sala cancelada.');
+}
+
+/* ── Reset geral ── */
+function mpReset() {
+  clearInterval(MP.pingInterval);
+  mpStopRoomsPolling();
+  mpRemoveRoomFromFB();
+  MP.inMpGame = false; MP.isHost = false;
+  MP.myClass = null; MP.oppClass = null;
+  MP.myMullDone = false; MP.oppMullDone = false;
+  MP.roomId = null;
+  try { if(MP.gameChannel) MP.gameChannel.unsubscribe(); } catch(e){}
+  try { if(MP.lobbyChannel) MP.lobbyChannel.unsubscribe(); } catch(e){}
+  try { if(MP.ably) MP.ably.close(); } catch(e){}
+  MP.ably = null; MP.gameChannel = null; MP.lobbyChannel = null;
+  _ablyOk = false;
+  const wb = document.getElementById('mp-waiting-box');
+  const cb = document.getElementById('mp-create-box');
+  if (wb) wb.style.display = 'none';
+  if (cb) cb.style.display = '';
+}
+
+// Compat shim (deck builder chama mpConnect)
+function mpConnect(rawId) { toast('Use o sistema de salas para jogar online!'); }
 
 /* ── Receive data ── */
 function mpOnData(data) {
   if (!data || !data.type) return;
-  const status = document.getElementById('mp-lobby-status');
-  const dot    = document.getElementById('mp-conn-dot');
   switch(data.type) {
-    case 'guest_joined':
-      if (MP.isHost) {
-        if (status) status.textContent = 'Oponente conectou!';
-        if (dot) dot.className = 'mp-dot green';
-        toast('Oponente conectou! Escolha sua classe.');
-        showMpClassPick();
-      }
-      break;
     case 'class_pick':
       MP.oppClass = data.cls;
       toast(`Oponente: ${data.cls.emoji} ${data.cls.name}`);
       mpCheckBothReady(); break;
     case 'mulligan_done':
       MP.oppMullDone = true;
-      toast('Oponente confirmou a mao.');
+      toast('Oponente confirmou a mão.');
       mpCheckMulligan(); break;
     case 'action':
       mpHandleAction(data.action); break;
@@ -2151,6 +2375,9 @@ function mpOnData(data) {
     case 'pong': MP.lastPing=Date.now(); break;
     case 'chat':  mpReceiveChat(data.msg); break;
     case 'game_over': endGame(true); break;
+    case 'disconnect': 
+      if (MP.inMpGame) { toast('⚠ Oponente desconectou! Vitória por W.O.'); endGame(true); }
+      MP.inMpGame = false; break;
   }
 }
 
@@ -2179,7 +2406,8 @@ function mpPickClass(cls) {
   MP.myClass = cls;
   mpSend({ type:'class_pick', cls:{ id:cls.id, emoji:cls.emoji, name:cls.name } });
   const status = document.getElementById('mp-pick-status');
-  if (status) status.textContent = `${cls.emoji} ${cls.name} escolhido! Aguardando oponente...`;
+  if (status) status.textContent = `✅ ${cls.emoji} ${cls.name} escolhido! Aguardando oponente...`;
+  // grey out cards
   document.querySelectorAll('#mp-pick-grid .pick-card').forEach(d => {
     d.style.pointerEvents = 'none'; d.style.opacity = '.5';
   });
@@ -2202,6 +2430,7 @@ function mpStartMpGame() {
   const eCls = CLASSES.find(c => c.id === MP.oppClass.id) ||
                { id: MP.oppClass.id, emoji: MP.oppClass.emoji, name: MP.oppClass.name, color: '#aaa', flavor:'', mech:'' };
 
+  // Usa deck customizado se disponivel, senao usa deck padrao da classe
   let playerDeck;
   if (G.customDeck && G.customDeck.cardIds && G.customDeck.cardIds.length === 20) {
     playerDeck = G.customDeck.cardIds.map(id => {
@@ -2209,26 +2438,27 @@ function mpStartMpGame() {
       return c ? clone(c) : null;
     }).filter(Boolean).sort(() => Math.random() - .5);
     toast('Usando seu deck customizado!');
-    G.customDeck = null;
+    G.customDeck = null; // limpa depois de usar
   } else {
     playerDeck = buildDeck(pCls.id);
   }
 
   G.game = {
     turn: 1,
-    pTurn: !MP.isHost,
+    pTurn: !MP.isHost,   // guest (convidado) vai primeiro
     P: { cls:pCls, hp:30, maxHp:30, mana:1, maxMana:1, deck:playerDeck, hand:[], field:[null,null,null,null,null], grav:[], wisdom:0, infected:0, shield:false },
     E: { cls:eCls, hp:30, maxHp:30, mana:1, maxMana:1, deck:[], hand:[], field:[null,null,null,null,null], grav:[], wisdom:0, infected:0, shield:false },
     selCard:null, selField:null, aiLock:false, _pAttackedHero:false
   };
 
   for (let i = 0; i < 4; i++) draw('P');
+  // placeholder hand for opponent
   for (let i = 0; i < 4; i++) G.game.E.hand.push({ id:'__hidden__', nm:'?', cost:0, atk:0, hp:0, txt:'', cls:'neutral', rar:'common', curHp:0 });
 
   G.mulliganData = { mulled:[] };
   goTo('s-mulligan');
   document.getElementById('mull-title').textContent =
-    MP.isHost ? 'Mao Inicial (Anfitriao — joga 2) ' : 'Mao Inicial (Convidado — joga 1)';
+    MP.isHost ? '✦ Mão Inicial (Anfitrião — joga 2º) ✦' : '✦ Mão Inicial (Convidado — joga 1º) ✦';
   renderMulligan();
 
   clearInterval(MP.pingInterval);
@@ -2236,8 +2466,8 @@ function mpStartMpGame() {
     mpSend({ type:'ping' });
     const ms = Date.now() - MP.lastPing;
     const el = document.getElementById('mp-ping');
-    if (el && MP.inMpGame) el.textContent = `${ms < 4000 ? ms+'ms' : 'sem sinal'}`;
-  }, 3000);
+    if (el && MP.inMpGame) el.textContent = `📶 ${ms < 8000 ? ms+'ms' : 'sem sinal'}`;
+  }, 4000);
 }
 
 /* ── Mulligan MP ── */
@@ -2252,7 +2482,7 @@ function mpConfirmMulligan() {
   G.mulliganData = null;
   MP.myMullDone = true;
   mpSend({ type:'mulligan_done' });
-  toast('Mao confirmada! Aguardando oponente...');
+  toast('Mão confirmada! Aguardando oponente...');
   mpCheckMulligan();
 }
 
@@ -2260,7 +2490,7 @@ function mpSkipMulligan() {
   G.mulliganData = null;
   MP.myMullDone = true;
   mpSend({ type:'mulligan_done' });
-  toast('Mao mantida! Aguardando oponente...');
+  toast('Mão mantida! Aguardando oponente...');
   mpCheckMulligan();
 }
 
@@ -2268,7 +2498,7 @@ function mpCheckMulligan() {
   if (!MP.myMullDone || !MP.oppMullDone) return;
   G.game.E.hand = [];
   launchGame();
-  toast('Batalha iniciada!');
+  toast('⚔ Batalha iniciada!');
 }
 
 /* ── Actions received from opponent ── */
@@ -2318,10 +2548,10 @@ function mpOnEnterEnemy(c, idx) {
   if (c.cls === 'star') {
     [-1,1].forEach(d => { const a = gm.E.field[idx+d]; if(a){a.atk++;a.hp++;a.curHp++;} });
   }
-  if (c.id === 'w3') { gm.P.field.forEach(x => { if(x) x.frozen=true; }); toast('ZA WARUDO — seus servos congelados!'); }
-  else if (c.id==='w1'||c.id==='w4') { const t=gm.P.field.find(x=>x&&!x.frozen); if(t){t.frozen=true;toast('ZA WARUDO!');} }
-  else if (c.id==='w9') { gm.P.field.forEach((x,i)=>{ if(x){x.curHp-=3;if(x.curHp<=0)killCard('P',i);} }); toast('Road Roller!'); }
-  else if (c.id==='s4') { gm.P.field.forEach((x,i)=>{ if(x){x.curHp-=2;if(x.curHp<=0)killCard('P',i);} }); toast('Magician\'s Red!'); }
+  if (c.id === 'w3') { gm.P.field.forEach(x => { if(x) x.frozen=true; }); toast('⏰ ZA WARUDO — seus servos congelados!'); }
+  else if (c.id==='w1'||c.id==='w4') { const t=gm.P.field.find(x=>x&&!x.frozen); if(t){t.frozen=true;toast('🌍 ZA WARUDO!');} }
+  else if (c.id==='w9') { gm.P.field.forEach((x,i)=>{ if(x){x.curHp-=3;if(x.curHp<=0)killCard('P',i);} }); toast('🚗 Road Roller!'); }
+  else if (c.id==='s4') { gm.P.field.forEach((x,i)=>{ if(x){x.curHp-=2;if(x.curHp<=0)killCard('P',i);} }); toast('🔴 Magician\'s Red!'); }
   else if (c.id==='s3') { const t=gm.P.field.find(x=>x); if(t){t.frozen=true;toast('Hierophant trava seu servo!');} }
   else if (c.id==='s1'||c.id==='n3') healHero('E',3);
   if (c.cls==='hermit') gm.E.wisdom=(gm.E.wisdom||0)+1;
@@ -2344,23 +2574,28 @@ function mpEndTurn() {
 function mpReceiveEndTurn(data) {
   const gm = G.game; if (!gm) return;
 
+  // sync opponent's field into our E
   if (data.eField) {
     data.eField.forEach((c,i) => {
       gm.E.field[i] = c ? Object.assign({},c,{exh:false,sleep:false}) : null;
     });
   }
 
+  // per-turn passives
   if (gm.P.cls.id==='star' && gm.turn%2===0) healHero('P',2);
   ['P','E'].forEach(w => { gm[w].field.forEach(c=>{ if(c&&c.id==='m4'){c.atk++;c.hp++;c.curHp++;} }); });
   gm.P.field.forEach(c => {
     if (c&&c.id==='h9') {
       c._turns=(c._turns||0)+1;
-      if(c._turns>=3&&!c._boosted){c.atk+=3;c.hp+=3;c.curHp+=3;c._boosted=true;toast('Patient One despertou!');}
+      if(c._turns>=3&&!c._boosted){c.atk+=3;c.hp+=3;c.curHp+=3;c._boosted=true;toast('⏳ Patient One despertou!');}
     }
   });
+  // s10: Justice
   gm.P.field.forEach(c=>{ if(c&&c.id==='s10') healHero('P',2); });
   gm.E.field.forEach(c=>{ if(c&&c.id==='s10') healHero('E',2); });
+  // infeccao por turno
   gm.P.field.forEach(c=>{ if(c&&c._infected&&c._infected>0){ c.curHp-=2; c._infected--; if(c.curHp<=0){const i=gm.P.field.indexOf(c);if(i>=0)killCard('P',i);} } });
+  // _locked countdown
   [...gm.P.field,...gm.E.field].forEach(c=>{ if(c&&c._locked&&c._locked>0){ c._locked--; if(c._locked<=0){c.frozen=false;c._locked=0;} } });
   gm.P.field.forEach(c=>{ if(c&&c.frozen) c.frozen=false; });
 
@@ -2376,7 +2611,7 @@ function mpReceiveEndTurn(data) {
   checkEnd();
   if (!G.game) return;
   redraw();
-  toast(`Turno ${gm.turn} — Sua vez! Mana: ${gm.P.mana}`);
+  toast(`🎴 Turno ${gm.turn} — Sua vez! Mana: ${gm.P.mana}`);
 }
 
 /* ── Chat ── */
@@ -2385,25 +2620,26 @@ function sendMpChat() {
   const msg = (inp ? inp.value.trim() : '');
   if (!msg) return;
   mpSend({ type:'chat', msg });
-  mpAddChatLine('Voce', msg, true);
+  mpAddChatLine('Você', msg, true);
   if (inp) inp.value = '';
 }
 
 function mpQuickChat(msg) {
   mpSend({ type:'chat', msg });
-  mpAddChatLine('Voce', msg, true);
-  toast(`"${msg}"`);
+  mpAddChatLine('Você', msg, true);
+  toast(`💬 "${msg}"`);
 }
 
 function mpReceiveChat(msg) {
   mpAddChatLine('Oponente', msg, false);
   const panel = document.getElementById('mp-chat-panel');
-  if (!panel || !panel.classList.contains('show')) toast(`Oponente: ${msg}`);
+  if (!panel || !panel.classList.contains('show')) toast(`💬 Oponente: ${msg}`);
 }
 
 function mpAddChatLine(who, msg, mine) {
   let box = document.getElementById('mp-chat-msgs');
   if (!box) {
+    // create msg area inside panel if missing
     box = document.createElement('div');
     box.id = 'mp-chat-msgs';
     box.style.cssText = 'max-height:90px;overflow-y:auto;margin-bottom:.3rem;';
@@ -2425,23 +2661,15 @@ function toggleMpChat() {
 
 function mpCopyId() {
   const id = MP.myId || '';
-  if (!id) { toast('Codigo ainda nao gerado. Aguarde...'); return; }
-  navigator.clipboard.writeText(id).then(() => toast('Codigo copiado!')).catch(() => {
+  if (!id) { toast('Código ainda não gerado. Aguarde...'); return; }
+  navigator.clipboard.writeText(id).then(() => toast('📋 Código copiado!')).catch(() => {
     const ta = document.createElement('textarea');
     ta.value = id; document.body.appendChild(ta); ta.select();
-    try { document.execCommand('copy'); toast('Copiado!'); } catch(e) { toast('Copie manualmente: '+id); }
+    try { document.execCommand('copy'); toast('📋 Copiado!'); } catch(e) { toast('Copie manualmente: '+id); }
     ta.remove();
   });
 }
 
-function mpReset() {
-  clearInterval(MP.pingInterval);
-  MP.inMpGame = false; MP.myClass = null; MP.oppClass = null;
-  MP.myMullDone = false; MP.oppMullDone = false;
-  try { if(MP.channel) MP.channel.unsubscribe(); } catch(e) {}
-  try { if(MP.ably) MP.ably.close(); } catch(e) {}
-  MP.ably = null; MP.channel = null; MP.roomId = null; MP.myId = null;
-}
 
 /* ═══════════════════════════════════════════════════
    DECK BUILDER
