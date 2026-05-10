@@ -2047,11 +2047,20 @@ function mpInit() {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' },
-    // TURN publico gratuito via Open Relay (metered.ca)
+    { urls: 'stun:stun.relay.metered.ca:80' },
+    // TURN via metered.ca (open relay)
     { urls: 'turn:openrelay.metered.ca:80',    username: 'openrelayproject', credential: 'openrelayproject' },
     { urls: 'turn:openrelay.metered.ca:443',   username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turns:openrelay.metered.ca:443',  username: 'openrelayproject', credential: 'openrelayproject' },
     { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+    // TURN via numb.viagenie.ca (backup)
+    { urls: 'turn:numb.viagenie.ca', username: 'webrtc@live.com', credential: 'muazkh' },
+    // TURN via freestun
+    { urls: 'turn:freestun.net:3478', username: 'free', credential: 'free' },
+    { urls: 'turns:freestun.net:5349', username: 'free', credential: 'free' },
   ];
 
   try {
@@ -2066,13 +2075,13 @@ function mpInit() {
     return;
   }
 
-  // Timeout: se em 12s nao conectou ao servidor PeerJS, avisa
+  // Timeout: se em 20s nao conectou ao servidor PeerJS, avisa
   const initTimeout = setTimeout(() => {
     if (!MP.myId) {
       if (status) status.textContent = 'Timeout: servidor P2P nao respondeu. Verifique sua internet.';
       if (dot) dot.className = 'mp-dot red';
     }
-  }, 12000);
+  }, 20000);
 
   MP.peer.on('open', id => {
     clearTimeout(initTimeout);
