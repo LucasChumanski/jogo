@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ARCANA DUEL — Tarot Stand Battle ⚔ Online</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700;900&family=Cinzel:wght@400;600;700&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,400&display=swap" rel="stylesheet">
-<!-- PeerJS para multiplayer P2P (WebRTC) -->
-<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<!-- Ably para multiplayer (funciona em qualquer rede, sem WebRTC) -->
+<script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
@@ -597,14 +597,14 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--dark);color:va
       <div class="mp-box-title">🌐 Status da Conexão</div>
       <div class="mp-status-bar">
         <div class="mp-dot yellow" id="mp-conn-dot"></div>
-        <div class="mp-status-txt" id="mp-lobby-status">Conectando ao servidor P2P...</div>
+        <div class="mp-status-txt" id="mp-lobby-status">Conectando ao servidor...</div>
       </div>
       <div class="mp-id-label">SEU CÓDIGO DE SALA:</div>
       <div class="mp-id-display">
-        <span style="flex:1;font-size:.68rem" id="mp-my-id">Aguardando...</span>
+        <span style="flex:1;font-size:1.4rem;font-family:'Cinzel Decorative',serif;letter-spacing:.15em;color:var(--gold2)" id="mp-my-id">Aguardando...</span>
         <button class="mp-btn secondary" style="padding:.3rem .7rem;font-size:.65rem;margin:0;flex-shrink:0" onclick="mpCopyId()">📋 Copiar</button>
       </div>
-      <div class="mp-qr-hint">Compartilhe este código com seu oponente via WhatsApp, Discord, etc.</div>
+      <div class="mp-qr-hint">Mande este código de 6 letras pro seu amigo via WhatsApp, Discord, etc.</div>
     </div>
 
     <div class="mp-box">
@@ -625,7 +625,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--dark);color:va
       <div style="font-size:.78rem;color:var(--text2);margin-bottom:.7rem;line-height:1.6">
         Cole o código do anfitrião abaixo e clique em Conectar.
       </div>
-      <input class="mp-input" id="mp-remote-input" placeholder="Cole o código do anfitrião aqui..." />
+      <input class="mp-input" id="mp-remote-input" placeholder="Digite o código de 6 letras do anfitrião (ex: AB3X7K)" maxlength="8" style="text-transform:uppercase;font-size:1.1rem;letter-spacing:.1em;text-align:center" />
       <div style="display:flex;gap:.5rem;flex-wrap:wrap">
         <button class="mp-btn" onclick="mpConnect(document.getElementById('mp-remote-input').value)">⚔ Conectar e Jogar</button>
       </div>
@@ -1996,204 +1996,152 @@ function fx(val,x,y,type){
 /* ═══════════════════════════════════════════════════
    MULTIPLAYER — PeerJS P2P
 ═══════════════════════════════════════════════════ */
+const ABLY_KEY = 'JcIByg.9qSQRA:JHzg55s3n2Mnu7Q6Zlpz732YUrI8jZZmg0zc76u3O6s';
+
 const MP = {
-  peer: null, conn: null,
+  ably: null, channel: null,
   inMpGame: false, isHost: false,
-  myId: null, myClass: null, oppClass: null,
+  myId: null, roomId: null,
+  myClass: null, oppClass: null,
   myMullDone: false, oppMullDone: false,
   pingInterval: null, lastPing: Date.now(),
 };
 
+/* ── Gera ID de sala curto (6 letras) ── */
+function mpGenRoomId() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let id = '';
+  for (let i = 0; i < 6; i++) id += chars[Math.floor(Math.random() * chars.length)];
+  return id;
+}
+
 function goToMpLobby() {
   goTo('s-mp-lobby');
-  // Avisa se estiver em file:// (WebRTC nao funciona em arquivo local no Chrome)
-  if (location.protocol === 'file:') {
-    const status = document.getElementById('mp-lobby-status');
-    const dot = document.getElementById('mp-conn-dot');
-    const idEl = document.getElementById('mp-my-id');
-    if (dot) dot.className = 'mp-dot red';
-    if (idEl) idEl.textContent = 'Indisponivel em arquivo local';
-    if (status) status.innerHTML =
-      '<span style="color:#ff6644">Abra via servidor HTTP para usar o Multiplayer.</span>';
-    // Mostra instrucoes no box
-    const box = document.querySelector('#s-mp-lobby .mp-box');
-    if (box) {
-      const warn = document.createElement('div');
-      warn.style.cssText = 'margin-top:.8rem;padding:.8rem;background:rgba(255,80,0,.1);border:1px solid rgba(255,80,0,.4);border-radius:6px;font-family:\'Cinzel\',serif;font-size:.72rem;color:#ffaa66;line-height:1.7';
-      warn.innerHTML = `<strong style="color:#ff8844">Como ativar o Multiplayer:</strong><br>
-        O Chrome bloqueia conexoes P2P em arquivos locais.<br>
-        <strong>Opcao 1 (mais facil):</strong> Abra o jogo em outro navegador alem do Chrome (Firefox funciona com file://).<br>
-        <strong>Opcao 2:</strong> Instale o VS Code + extensao <em>Live Server</em> e abra o arquivo por ela.<br>
-        <strong>Opcao 3:</strong> Clique duplo no arquivo no Firefox diretamente.<br>
-        <strong>Opcao 4:</strong> Abra o Chrome com a flag <code>--allow-file-access-from-files --disable-web-security</code>`;
-      box.appendChild(warn);
-    }
-    return;
-  }
   mpInit();
 }
 
-/* ── Init PeerJS ── */
+/* ── Init Ably ── */
 function mpInit() {
-  if (MP.peer && !MP.peer.destroyed) return;
+  if (MP.ably) return;
   const status = document.getElementById('mp-lobby-status');
   const dot    = document.getElementById('mp-conn-dot');
   const idEl   = document.getElementById('mp-my-id');
-  if (status) status.textContent = 'Conectando ao servidor P2P...';
+  if (status) status.textContent = 'Conectando ao servidor...';
   if (dot)    dot.className = 'mp-dot yellow';
 
-  // Servidores ICE com TURN publicos gratuitos (necessarios para conexoes NAT/firewall)
-  const iceServers = [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' },
-    { urls: 'stun:stun.relay.metered.ca:80' },
-    // TURN via metered.ca (open relay)
-    { urls: 'turn:openrelay.metered.ca:80',    username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443',   username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turns:openrelay.metered.ca:443',  username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-    // TURN via numb.viagenie.ca (backup)
-    { urls: 'turn:numb.viagenie.ca', username: 'webrtc@live.com', credential: 'muazkh' },
-    // TURN via freestun
-    { urls: 'turn:freestun.net:3478', username: 'free', credential: 'free' },
-    { urls: 'turns:freestun.net:5349', username: 'free', credential: 'free' },
-  ];
-
   try {
-    MP.peer = new Peer(undefined, {
-      host: '0.peerjs.com', port: 443, path: '/', secure: true,
-      debug: 0,
-      config: { iceServers, iceTransportPolicy: 'all' }
-    });
+    MP.ably = new Ably.Realtime({ key: ABLY_KEY, clientId: 'p_' + Date.now() });
   } catch(e) {
-    if (status) status.textContent = 'Erro ao inicializar P2P: ' + e.message;
+    if (status) status.textContent = 'Erro ao conectar: ' + e.message;
     if (dot) dot.className = 'mp-dot red';
     return;
   }
 
-  // Timeout: se em 20s nao conectou ao servidor PeerJS, avisa
-  const initTimeout = setTimeout(() => {
-    if (!MP.myId) {
-      if (status) status.textContent = 'Timeout: servidor P2P nao respondeu. Verifique sua internet.';
-      if (dot) dot.className = 'mp-dot red';
-    }
-  }, 20000);
+  MP.ably.connection.on('connected', () => {
+    // Gera codigo de sala e entra no canal como anfitriao por padrao
+    const roomId = mpGenRoomId();
+    MP.roomId = roomId;
+    MP.myId = roomId;
+    MP.isHost = true;
 
-  MP.peer.on('open', id => {
-    clearTimeout(initTimeout);
-    MP.myId = id;
-    if (idEl) idEl.textContent = id;
+    if (idEl)   idEl.textContent = roomId;
     if (status) status.textContent = 'Conectado — aguardando oponente';
-    if (dot) dot.className = 'mp-dot green';
+    if (dot)    dot.className = 'mp-dot green';
+
+    // Entra no canal da sala
+    mpJoinChannel(roomId);
   });
 
-  MP.peer.on('connection', conn => {
-    MP.conn = conn; MP.isHost = true;
-    mpSetupConn();
-    if (document.getElementById('mp-lobby-status'))
-      document.getElementById('mp-lobby-status').textContent = 'Oponente conectou!';
-    if (document.getElementById('mp-conn-dot'))
-      document.getElementById('mp-conn-dot').className = 'mp-dot green';
-    toast('Oponente conectou! Escolha sua classe.');
-    showMpClassPick();
-  });
-
-  MP.peer.on('error', err => {
-    clearTimeout(initTimeout);
-    const type = err.type || '';
-    const msg = err.message || type || 'falha desconhecida';
-    let friendlyMsg = 'Erro: ' + msg;
-    if (type === 'peer-unavailable') friendlyMsg = 'Codigo invalido ou anfitriao offline.';
-    else if (type === 'network' || type === 'disconnected') friendlyMsg = 'Sem conexao com o servidor P2P. Verifique a internet.';
-    else if (type === 'server-error') friendlyMsg = 'Servidor P2P fora do ar. Tente novamente.';
-    if (status) status.textContent = friendlyMsg;
+  MP.ably.connection.on('failed', () => {
+    if (status) status.textContent = 'Falha na conexao. Verifique a internet.';
     if (dot) dot.className = 'mp-dot red';
-    toast(friendlyMsg);
   });
 
-  MP.peer.on('disconnected', () => {
-    if (status) status.textContent = 'Desconectado. Reconectando...';
+  MP.ably.connection.on('disconnected', () => {
     if (dot) dot.className = 'mp-dot yellow';
-    try { if (!MP.peer.destroyed) MP.peer.reconnect(); } catch(e) {}
+    if (status) status.textContent = 'Reconectando...';
   });
 }
 
-/* ── Connect (guest) ── */
+/* ── Entra no canal de uma sala ── */
+function mpJoinChannel(roomId) {
+  if (MP.channel) { try { MP.channel.unsubscribe(); } catch(e) {} }
+  MP.channel = MP.ably.channels.get('arcana-room-' + roomId);
+  MP.channel.subscribe(msg => {
+    const data = msg.data;
+    if (!data || !data.type) return;
+    // ignora mensagens proprias
+    if (data._from === MP.ably.auth.clientId) return;
+    mpOnData(data);
+  });
+}
+
+/* ── Connect como convidado ── */
 function mpConnect(rawId) {
-  const id = (rawId || '').trim();
-  if (!id) { toast('Digite o código do anfitrião!'); return; }
+  const id = (rawId || '').trim().toUpperCase();
+  if (!id || id.length < 4) { toast('Digite o codigo da sala!'); return; }
 
-  // peer nao criado ainda: inicializa e espera abrir antes de conectar
-  if (!MP.peer || MP.peer.destroyed) {
-    mpInit();
-    MP.peer.once('open', () => mpConnect(id));
+  const status = document.getElementById('mp-lobby-status');
+  const dot    = document.getElementById('mp-conn-dot');
+
+  // Se Ably ainda nao conectou, inicializa primeiro
+  if (!MP.ably || MP.ably.connection.state !== 'connected') {
+    if (status) status.textContent = 'Conectando...';
+    if (dot) dot.className = 'mp-dot yellow';
+
+    if (!MP.ably) {
+      try { MP.ably = new Ably.Realtime({ key: ABLY_KEY, clientId: 'p_' + Date.now() }); }
+      catch(e) { toast('Erro ao conectar: ' + e.message); return; }
+    }
+    MP.ably.connection.once('connected', () => mpConnect(id));
     return;
   }
-  // peer criado mas ainda sem ID (aguardando handshake com servidor PeerJS)
-  if (!MP.myId) {
-    MP.peer.once('open', () => mpConnect(id));
-    return;
-  }
 
-  if (document.getElementById('mp-lobby-status'))
-    document.getElementById('mp-lobby-status').textContent = 'Conectando ao anfitriao...';
-  if (document.getElementById('mp-conn-dot'))
-    document.getElementById('mp-conn-dot').className = 'mp-dot yellow';
+  MP.roomId = id;
+  MP.isHost = false;
 
-  const conn = MP.peer.connect(id, { reliable:true, serialization:'json' });
-  MP.conn = conn; MP.isHost = false;
-  let opened = false;
-  conn.on('open', () => {
-    if (opened) return; opened = true;
+  if (status) status.textContent = 'Entrando na sala ' + id + '...';
+  if (dot) dot.className = 'mp-dot yellow';
+
+  mpJoinChannel(id);
+
+  // Avisa o anfitriao que alguem entrou
+  setTimeout(() => {
+    mpSend({ type: 'guest_joined' });
+    if (status) status.textContent = 'Conectado! Escolha sua classe.';
+    if (dot) dot.className = 'mp-dot green';
     toast('Conectado! Escolha sua classe.');
-    if (document.getElementById('mp-lobby-status'))
-      document.getElementById('mp-lobby-status').textContent = 'Conectado ao anfitriao!';
-    if (document.getElementById('mp-conn-dot'))
-      document.getElementById('mp-conn-dot').className = 'mp-dot green';
-    mpSetupConn();
     showMpClassPick();
-  });
-  conn.on('error', e => {
-    const msg = (e && (e.message || e.type)) || 'verifique o codigo';
-    toast('Falha na conexao: ' + msg);
-    if (document.getElementById('mp-lobby-status'))
-      document.getElementById('mp-lobby-status').textContent = 'Falha: ' + msg;
-    if (document.getElementById('mp-conn-dot'))
-      document.getElementById('mp-conn-dot').className = 'mp-dot red';
-  });
-}
-
-function mpSetupConn() {
-  if (!MP.conn) return;
-  MP.conn.on('data', mpOnData);
-  MP.conn.on('close', () => {
-    clearInterval(MP.pingInterval);
-    if (MP.inMpGame) { toast('⚠ Oponente desconectou! Vitória por W.O.'); endGame(true); }
-    else toast('⚠ Conexão encerrada.');
-    MP.inMpGame = false;
-  });
+  }, 800);
 }
 
 function mpSend(data) {
-  if (!MP.conn || !MP.conn.open) return;
-  try { MP.conn.send(data); } catch(e) {}
+  if (!MP.channel) return;
+  data._from = MP.ably && MP.ably.auth ? MP.ably.auth.clientId : '';
+  try { MP.channel.publish('msg', data); } catch(e) {}
 }
 
 /* ── Receive data ── */
 function mpOnData(data) {
   if (!data || !data.type) return;
+  const status = document.getElementById('mp-lobby-status');
+  const dot    = document.getElementById('mp-conn-dot');
   switch(data.type) {
+    case 'guest_joined':
+      if (MP.isHost) {
+        if (status) status.textContent = 'Oponente conectou!';
+        if (dot) dot.className = 'mp-dot green';
+        toast('Oponente conectou! Escolha sua classe.');
+        showMpClassPick();
+      }
+      break;
     case 'class_pick':
       MP.oppClass = data.cls;
       toast(`Oponente: ${data.cls.emoji} ${data.cls.name}`);
       mpCheckBothReady(); break;
     case 'mulligan_done':
       MP.oppMullDone = true;
-      toast('Oponente confirmou a mão.');
+      toast('Oponente confirmou a mao.');
       mpCheckMulligan(); break;
     case 'action':
       mpHandleAction(data.action); break;
@@ -2231,8 +2179,7 @@ function mpPickClass(cls) {
   MP.myClass = cls;
   mpSend({ type:'class_pick', cls:{ id:cls.id, emoji:cls.emoji, name:cls.name } });
   const status = document.getElementById('mp-pick-status');
-  if (status) status.textContent = `✅ ${cls.emoji} ${cls.name} escolhido! Aguardando oponente...`;
-  // grey out cards
+  if (status) status.textContent = `${cls.emoji} ${cls.name} escolhido! Aguardando oponente...`;
   document.querySelectorAll('#mp-pick-grid .pick-card').forEach(d => {
     d.style.pointerEvents = 'none'; d.style.opacity = '.5';
   });
@@ -2255,7 +2202,6 @@ function mpStartMpGame() {
   const eCls = CLASSES.find(c => c.id === MP.oppClass.id) ||
                { id: MP.oppClass.id, emoji: MP.oppClass.emoji, name: MP.oppClass.name, color: '#aaa', flavor:'', mech:'' };
 
-  // Usa deck customizado se disponivel, senao usa deck padrao da classe
   let playerDeck;
   if (G.customDeck && G.customDeck.cardIds && G.customDeck.cardIds.length === 20) {
     playerDeck = G.customDeck.cardIds.map(id => {
@@ -2263,27 +2209,26 @@ function mpStartMpGame() {
       return c ? clone(c) : null;
     }).filter(Boolean).sort(() => Math.random() - .5);
     toast('Usando seu deck customizado!');
-    G.customDeck = null; // limpa depois de usar
+    G.customDeck = null;
   } else {
     playerDeck = buildDeck(pCls.id);
   }
 
   G.game = {
     turn: 1,
-    pTurn: !MP.isHost,   // guest (convidado) vai primeiro
+    pTurn: !MP.isHost,
     P: { cls:pCls, hp:30, maxHp:30, mana:1, maxMana:1, deck:playerDeck, hand:[], field:[null,null,null,null,null], grav:[], wisdom:0, infected:0, shield:false },
     E: { cls:eCls, hp:30, maxHp:30, mana:1, maxMana:1, deck:[], hand:[], field:[null,null,null,null,null], grav:[], wisdom:0, infected:0, shield:false },
     selCard:null, selField:null, aiLock:false, _pAttackedHero:false
   };
 
   for (let i = 0; i < 4; i++) draw('P');
-  // placeholder hand for opponent
   for (let i = 0; i < 4; i++) G.game.E.hand.push({ id:'__hidden__', nm:'?', cost:0, atk:0, hp:0, txt:'', cls:'neutral', rar:'common', curHp:0 });
 
   G.mulliganData = { mulled:[] };
   goTo('s-mulligan');
   document.getElementById('mull-title').textContent =
-    MP.isHost ? '✦ Mão Inicial (Anfitrião — joga 2º) ✦' : '✦ Mão Inicial (Convidado — joga 1º) ✦';
+    MP.isHost ? 'Mao Inicial (Anfitriao — joga 2) ' : 'Mao Inicial (Convidado — joga 1)';
   renderMulligan();
 
   clearInterval(MP.pingInterval);
@@ -2291,7 +2236,7 @@ function mpStartMpGame() {
     mpSend({ type:'ping' });
     const ms = Date.now() - MP.lastPing;
     const el = document.getElementById('mp-ping');
-    if (el && MP.inMpGame) el.textContent = `📶 ${ms < 4000 ? ms+'ms' : 'sem sinal'}`;
+    if (el && MP.inMpGame) el.textContent = `${ms < 4000 ? ms+'ms' : 'sem sinal'}`;
   }, 3000);
 }
 
@@ -2307,7 +2252,7 @@ function mpConfirmMulligan() {
   G.mulliganData = null;
   MP.myMullDone = true;
   mpSend({ type:'mulligan_done' });
-  toast('Mão confirmada! Aguardando oponente...');
+  toast('Mao confirmada! Aguardando oponente...');
   mpCheckMulligan();
 }
 
@@ -2315,7 +2260,7 @@ function mpSkipMulligan() {
   G.mulliganData = null;
   MP.myMullDone = true;
   mpSend({ type:'mulligan_done' });
-  toast('Mão mantida! Aguardando oponente...');
+  toast('Mao mantida! Aguardando oponente...');
   mpCheckMulligan();
 }
 
@@ -2323,7 +2268,7 @@ function mpCheckMulligan() {
   if (!MP.myMullDone || !MP.oppMullDone) return;
   G.game.E.hand = [];
   launchGame();
-  toast('⚔ Batalha iniciada!');
+  toast('Batalha iniciada!');
 }
 
 /* ── Actions received from opponent ── */
@@ -2373,10 +2318,10 @@ function mpOnEnterEnemy(c, idx) {
   if (c.cls === 'star') {
     [-1,1].forEach(d => { const a = gm.E.field[idx+d]; if(a){a.atk++;a.hp++;a.curHp++;} });
   }
-  if (c.id === 'w3') { gm.P.field.forEach(x => { if(x) x.frozen=true; }); toast('⏰ ZA WARUDO — seus servos congelados!'); }
-  else if (c.id==='w1'||c.id==='w4') { const t=gm.P.field.find(x=>x&&!x.frozen); if(t){t.frozen=true;toast('🌍 ZA WARUDO!');} }
-  else if (c.id==='w9') { gm.P.field.forEach((x,i)=>{ if(x){x.curHp-=3;if(x.curHp<=0)killCard('P',i);} }); toast('🚗 Road Roller!'); }
-  else if (c.id==='s4') { gm.P.field.forEach((x,i)=>{ if(x){x.curHp-=2;if(x.curHp<=0)killCard('P',i);} }); toast('🔴 Magician\'s Red!'); }
+  if (c.id === 'w3') { gm.P.field.forEach(x => { if(x) x.frozen=true; }); toast('ZA WARUDO — seus servos congelados!'); }
+  else if (c.id==='w1'||c.id==='w4') { const t=gm.P.field.find(x=>x&&!x.frozen); if(t){t.frozen=true;toast('ZA WARUDO!');} }
+  else if (c.id==='w9') { gm.P.field.forEach((x,i)=>{ if(x){x.curHp-=3;if(x.curHp<=0)killCard('P',i);} }); toast('Road Roller!'); }
+  else if (c.id==='s4') { gm.P.field.forEach((x,i)=>{ if(x){x.curHp-=2;if(x.curHp<=0)killCard('P',i);} }); toast('Magician\'s Red!'); }
   else if (c.id==='s3') { const t=gm.P.field.find(x=>x); if(t){t.frozen=true;toast('Hierophant trava seu servo!');} }
   else if (c.id==='s1'||c.id==='n3') healHero('E',3);
   if (c.cls==='hermit') gm.E.wisdom=(gm.E.wisdom||0)+1;
@@ -2399,28 +2344,23 @@ function mpEndTurn() {
 function mpReceiveEndTurn(data) {
   const gm = G.game; if (!gm) return;
 
-  // sync opponent's field into our E
   if (data.eField) {
     data.eField.forEach((c,i) => {
       gm.E.field[i] = c ? Object.assign({},c,{exh:false,sleep:false}) : null;
     });
   }
 
-  // per-turn passives
   if (gm.P.cls.id==='star' && gm.turn%2===0) healHero('P',2);
   ['P','E'].forEach(w => { gm[w].field.forEach(c=>{ if(c&&c.id==='m4'){c.atk++;c.hp++;c.curHp++;} }); });
   gm.P.field.forEach(c => {
     if (c&&c.id==='h9') {
       c._turns=(c._turns||0)+1;
-      if(c._turns>=3&&!c._boosted){c.atk+=3;c.hp+=3;c.curHp+=3;c._boosted=true;toast('⏳ Patient One despertou!');}
+      if(c._turns>=3&&!c._boosted){c.atk+=3;c.hp+=3;c.curHp+=3;c._boosted=true;toast('Patient One despertou!');}
     }
   });
-  // s10: Justice
   gm.P.field.forEach(c=>{ if(c&&c.id==='s10') healHero('P',2); });
   gm.E.field.forEach(c=>{ if(c&&c.id==='s10') healHero('E',2); });
-  // infeccao por turno
   gm.P.field.forEach(c=>{ if(c&&c._infected&&c._infected>0){ c.curHp-=2; c._infected--; if(c.curHp<=0){const i=gm.P.field.indexOf(c);if(i>=0)killCard('P',i);} } });
-  // _locked countdown
   [...gm.P.field,...gm.E.field].forEach(c=>{ if(c&&c._locked&&c._locked>0){ c._locked--; if(c._locked<=0){c.frozen=false;c._locked=0;} } });
   gm.P.field.forEach(c=>{ if(c&&c.frozen) c.frozen=false; });
 
@@ -2436,7 +2376,7 @@ function mpReceiveEndTurn(data) {
   checkEnd();
   if (!G.game) return;
   redraw();
-  toast(`🎴 Turno ${gm.turn} — Sua vez! Mana: ${gm.P.mana}`);
+  toast(`Turno ${gm.turn} — Sua vez! Mana: ${gm.P.mana}`);
 }
 
 /* ── Chat ── */
@@ -2445,26 +2385,25 @@ function sendMpChat() {
   const msg = (inp ? inp.value.trim() : '');
   if (!msg) return;
   mpSend({ type:'chat', msg });
-  mpAddChatLine('Você', msg, true);
+  mpAddChatLine('Voce', msg, true);
   if (inp) inp.value = '';
 }
 
 function mpQuickChat(msg) {
   mpSend({ type:'chat', msg });
-  mpAddChatLine('Você', msg, true);
-  toast(`💬 "${msg}"`);
+  mpAddChatLine('Voce', msg, true);
+  toast(`"${msg}"`);
 }
 
 function mpReceiveChat(msg) {
   mpAddChatLine('Oponente', msg, false);
   const panel = document.getElementById('mp-chat-panel');
-  if (!panel || !panel.classList.contains('show')) toast(`💬 Oponente: ${msg}`);
+  if (!panel || !panel.classList.contains('show')) toast(`Oponente: ${msg}`);
 }
 
 function mpAddChatLine(who, msg, mine) {
   let box = document.getElementById('mp-chat-msgs');
   if (!box) {
-    // create msg area inside panel if missing
     box = document.createElement('div');
     box.id = 'mp-chat-msgs';
     box.style.cssText = 'max-height:90px;overflow-y:auto;margin-bottom:.3rem;';
@@ -2486,11 +2425,11 @@ function toggleMpChat() {
 
 function mpCopyId() {
   const id = MP.myId || '';
-  if (!id) { toast('Código ainda não gerado. Aguarde...'); return; }
-  navigator.clipboard.writeText(id).then(() => toast('📋 Código copiado!')).catch(() => {
+  if (!id) { toast('Codigo ainda nao gerado. Aguarde...'); return; }
+  navigator.clipboard.writeText(id).then(() => toast('Codigo copiado!')).catch(() => {
     const ta = document.createElement('textarea');
     ta.value = id; document.body.appendChild(ta); ta.select();
-    try { document.execCommand('copy'); toast('📋 Copiado!'); } catch(e) { toast('Copie manualmente: '+id); }
+    try { document.execCommand('copy'); toast('Copiado!'); } catch(e) { toast('Copie manualmente: '+id); }
     ta.remove();
   });
 }
@@ -2499,9 +2438,9 @@ function mpReset() {
   clearInterval(MP.pingInterval);
   MP.inMpGame = false; MP.myClass = null; MP.oppClass = null;
   MP.myMullDone = false; MP.oppMullDone = false;
-  try { if(MP.conn) MP.conn.close(); } catch(e) {}
-  try { if(MP.peer) MP.peer.destroy(); } catch(e) {}
-  MP.peer = null; MP.conn = null;
+  try { if(MP.channel) MP.channel.unsubscribe(); } catch(e) {}
+  try { if(MP.ably) MP.ably.close(); } catch(e) {}
+  MP.ably = null; MP.channel = null; MP.roomId = null; MP.myId = null;
 }
 
 /* ═══════════════════════════════════════════════════
